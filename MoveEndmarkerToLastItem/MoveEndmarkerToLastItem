@@ -1,0 +1,36 @@
+local proj = 0
+
+-- 1. Rechteste Item-Kante ermitteln
+local itemCount = reaper.CountMediaItems(proj)
+local furthestRightEdge = -1
+
+for i = 0, itemCount - 1 do
+    local item = reaper.GetMediaItem(proj, i)
+    local pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+    local len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+    local rightEdge = pos + len
+
+    if rightEdge > furthestRightEdge then
+        furthestRightEdge = rightEdge
+    end
+end
+
+if furthestRightEdge < 0 then
+    return -- Keine Items vorhanden
+end
+
+-- 2. Marker "=END" suchen
+local retval, numMarkers, numRegions = reaper.CountProjectMarkers(proj)
+local total = numMarkers + numRegions
+
+for i = 0, total - 1 do
+    local retval, isRegion, pos, rgnend, name, markrgnindexnumber =
+        reaper.EnumProjectMarkers(i)
+
+    if not isRegion and name == "=END" then
+        -- 3. Marker verschieben
+        reaper.SetProjectMarker(markrgnindexnumber, false, furthestRightEdge, 0, name)
+        reaper.UpdateArrange()
+        break
+    end
+end
