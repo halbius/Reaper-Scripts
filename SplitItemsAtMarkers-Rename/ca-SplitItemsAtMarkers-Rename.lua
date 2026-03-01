@@ -2,7 +2,7 @@
 -- This Script Splits all items at markers
 -- and then renames the new item with 'trackname'_'markername'
 --
--- Author: Christian Alpen
+-- Author: Christian Alpen testtest
 --------------------------
 
 countMarkers = reaper.CountProjectMarkers(0)
@@ -39,7 +39,7 @@ then
 
           if (itemStart < markerPosition and itemEnd > markerPosition) then
 
-            newItem = reaper.SplitMediaItem( mediaItem, markerPosition )
+            newItem = reaper.SplitMediaItem( MediaItem, markerPosition )
             reaper.ShowConsoleMsg(tostring(mediaItem) .. ", " .. tostring(newItem) .."\n")
       
             newItemName = markerName .. "_" .. trackName
