@@ -2,7 +2,7 @@
 -- This Script Splits all items at markers
 -- and then renames the new item with 'trackname'_'markername'
 --
--- Author: Christian Alpen
+-- Author: Christian Alpen test test
 --------------------------
 
 CountMarkers = reaper.CountProjectMarkers(0)
