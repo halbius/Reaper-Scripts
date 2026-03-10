@@ -51,6 +51,56 @@ end
 
 end
 
+for i=0, CountMarkers-1 do -- cycle through markers
 
 
---reaper.ShowConsoleMsg("SelectionStart: " .. MarkerSelectionStart .. ", SelectionEnd: " .. MarkerSelectionEnd .."\n")
+retval, isRgn, markerPosition, rgnend, markerName, idx = reaper.EnumProjectMarkers(i)
+
+if (isRgn == false and markerPosition >= MarkerSelectionStart and markerPosition <= MarkerSelectionEnd) -- wenn Marker und keine Region
+then
+
+  for iTr=0, CountTracks-1 do -- cycle through tracks
+
+      mediaTrack = reaper.GetTrack( 0, iTr) 
+      itemTrackCount = reaper.CountTrackMediaItems( mediaTrack )
+
+      if itemTrackCount ~= nil
+      then
+
+        retval, trackName = reaper.GetTrackName( mediaTrack )
+         
+
+        for iItem=0, itemTrackCount-1 do
+
+          MediaItem = reaper.GetTrackMediaItem( mediaTrack, iItem )
+          itemStart = reaper.GetMediaItemInfo_Value( MediaItem, "D_POSITION")
+          itemLength = reaper.GetMediaItemInfo_Value( MediaItem, "D_LENGTH")
+          itemEnd = itemStart + itemLength
+          
+
+
+
+          if (itemStart < markerPosition and itemEnd > markerPosition) then
+
+            newItem = reaper.SplitMediaItem( MediaItem, markerPosition )
+      
+            newItemName = markerName .. "_" .. trackName
+            take = reaper.GetActiveTake( newItem )
+            reaper.GetSetMediaItemTakeInfo_String(take, "P_NAME", newItemName, true)
+
+
+          end
+
+
+
+
+        end
+      end
+
+    end
+
+
+
+  end
+
+end
