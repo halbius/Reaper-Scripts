@@ -7,6 +7,7 @@ Installation:
 
 1. Put both Scripts in Reapers Resources Script folder.
 2. Put the ca_markeritemlink_btn.lua in the toolbar
+3. If you like, put the toolbar.png's in .../Reaper/data/toolbar_icons and use them for the toolbar button.
 
 Usage:
 
