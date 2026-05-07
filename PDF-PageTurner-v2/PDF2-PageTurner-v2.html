@@ -216,13 +216,17 @@
       white-space: pre;
       transform-origin: 0% 0%;
     }
-    .textLayer .highlight {
-      background: var(--highlight);
-      border-radius: 2px;
+    /* Highlights werden als Overlay-Divs gezeichnet, nicht auf Spans */
+    .highlight-overlay {
+      position: absolute;
+      pointer-events: none;
+      border-radius: 3px;
+      background: rgba(255, 107, 53, 0.35);   /* orange = weitere Treffer */
+      outline: 1px solid rgba(255, 107, 53, 0.6);
     }
-    .textLayer .highlight.current {
-      background: rgba(255,107,53,.5);
-      outline: 1px solid var(--accent2);
+    .highlight-overlay.current {
+      background: rgba(0, 229, 160, 0.75);    /* grün = aktiver Treffer */
+      outline: 1px solid var(--accent);
     }
 
     /* page number label */
@@ -308,16 +312,18 @@
 
   // PDF.js state
   let pdfDoc       = null;
-  let pdfUrl       = null;       // current object URL or data URL
-  let renderedPages = {};        // pageNum → { canvas, textContent }
+  let pdfUrl       = null;
+  let renderedPages = {};
   let totalPages   = 0;
   let currentPage  = 1;
-  let searchMatches = [];        // [{pageNum, divs[]}]
+  let searchMatches = [];
   let currentMatchIndex = 0;
+  let zoomFactor   = 1.0;   // Zoom-Multiplikator, 1.0 = Standardgröße
 
   // item state – kommt direkt aus ExtState via ReaScript
-  let activeItemName  = "";   // vom ReaScript geschriebener Item-Name
-  let markerIsActive  = false; // true wenn gerade ein Seiten-Marker gilt → Item ignorieren
+  let activeItemName  = "";    // vom ReaScript geschriebener Item-Name
+  let markerIsActive  = false; // true wenn gerade ein Seiten-Marker gilt
+  let itemFilter      = "";    // Präfix-Filter: nur Items suchen die diesen Begriff enthalten
 
   // debounce for item search
   let searchDebounceTimer = null;
@@ -418,13 +424,21 @@
 
   // ═══════════════════════════════════════════════════════════
   // ITEM MODE – liest activeItemName aus ExtState (via ReaScript)
-  // Seite hat Vorrang – diese Funktion wird nur aufgerufen wenn !markerIsActive
+  // Seite hat Vorrang beim Springen, Highlights laufen immer
   // ═══════════════════════════════════════════════════════════
   function processItems() {
-    const term = activeItemName ? activeItemName.trim() : "";
+    let term = activeItemName ? activeItemName.trim() : "";
+
+    // Filter: wenn gesetzt, nur suchen wenn Item-Name den Filter enthält
+    if (term && itemFilter && !term.toLowerCase().includes(itemFilter.toLowerCase())) {
+      term = ""; // Item erfüllt Filter nicht → ignorieren
+      dbSet("Item gefiltert", `„${activeItemName}" enthält nicht „${itemFilter}"`);
+    }
+
     dbSet("modeItem aktiv", "ja");
-    dbSet("markerIsActive", markerIsActive ? "JA → Item ignoriert" : "nein");
+    dbSet("markerIsActive", markerIsActive ? "ja" : "nein");
     dbSet("activeItemName (ExtState)", activeItemName || "(leer)");
+    dbSet("itemFilter", itemFilter || "(kein Filter)");
     dbSet("lastSearchTerm", lastSearchTerm || "(leer)");
 
     if (term && term !== lastSearchTerm) {
@@ -435,7 +449,7 @@
     } else if (!term && lastSearchTerm !== "") {
       lastSearchTerm = "";
       clearAllHighlights();
-      setStatus("Kein aktives Item", "idle");
+      setStatus(itemFilter ? `Kein passendes Item (Filter: „${itemFilter}")` : "Kein aktives Item", "idle");
     }
   }
 
@@ -520,7 +534,8 @@
   function calcScale(page) {
     const viewport = page.getViewport({ scale: 1 });
     const availW = window.innerWidth - 40;
-    return Math.min(availW / viewport.width, 1.8);
+    const baseScale = Math.min(availW / viewport.width, 1.8);
+    return baseScale * zoomFactor;
   }
 
   function buildTextLayer(pageNum, div, textContent, viewport) {
@@ -546,9 +561,8 @@
 
   // ═══════════════════════════════════════════════════════════
   // SEARCH & HIGHLIGHT
-  // Sucht im rohen textContent (nicht in Spans) – damit werden
-  // auch Begriffe gefunden die über mehrere Spans verteilt sind
-  // (häufig bei PDFs: "O", "-", "Ton" als separate Elemente)
+  // Zeichnet einen einzigen Overlay-Div pro Treffergruppe –
+  // kein Span-Splitting, kein überlappender Rand
   // ═══════════════════════════════════════════════════════════
   async function searchInPDF(term) {
     clearAllHighlights();
@@ -566,46 +580,103 @@
 
       const { textContent } = data;
       const textLayerDiv = document.getElementById(`text-layer-${p}`);
-      if (!textLayerDiv) continue;
+      const pageWrap     = document.getElementById(`page-wrap-${p}`);
+      if (!textLayerDiv || !pageWrap) continue;
 
       const spans = Array.from(textLayerDiv.querySelectorAll('span'));
-      const items = textContent.items;
-
-      // Baue einen zusammenhängenden String aus allen Items einer Zeile
-      // Gruppiere nach Y-Position (±2px Toleranz = gleiche Zeile)
-      const lines = buildLines(items, spans);
-      const pageMatches = [];
+      const lines = buildLines(textContent.items, spans);
+      const pageGroups = [];
 
       for (const line of lines) {
         const lineText = line.map(s => s.text).join('').toLowerCase();
-        if (lineText.includes(termLower)) {
-          // Alle Spans dieser Zeile markieren
-          for (const seg of line) {
-            if (seg.span) {
-              seg.span.classList.add('highlight');
-              pageMatches.push(seg.span);
-            }
-          }
-        }
+        if (!lineText.includes(termLower)) continue;
+
+        const matchSpans = findMatchingSpans(line, termLower);
+        if (matchSpans.length === 0) continue;
+
+        // Bounding-Box aller Spans der Gruppe berechnen
+        const box = getGroupBoundingBox(matchSpans, pageWrap);
+        if (!box) continue;
+
+        // Einen einzigen Overlay-Div für die ganze Gruppe zeichnen
+        const overlay = document.createElement('div');
+        overlay.className = 'highlight-overlay';
+        overlay.style.left   = box.left   + 'px';
+        overlay.style.top    = box.top    + 'px';
+        overlay.style.width  = box.width  + 'px';
+        overlay.style.height = box.height + 'px';
+        overlay.dataset.group = pageGroups.length;
+        pageWrap.appendChild(overlay);
+
+        pageGroups.push({ spans: matchSpans, overlay });
       }
 
-      if (pageMatches.length > 0) {
-        searchMatches.push({ pageNum: p, spans: pageMatches });
+      if (pageGroups.length > 0) {
+        searchMatches.push({ pageNum: p, groups: pageGroups });
       }
     }
 
-    const total = searchMatches.reduce((s, m) => s + m.spans.length, 0);
+    const total = searchMatches.reduce((s, m) => s + m.groups.length, 0);
     document.getElementById('match-count').textContent =
       total > 0 ? `${total} Treffer` : 'kein Treffer';
     dbSet("Treffer gesamt", total);
 
     if (searchMatches.length > 0) {
-      searchMatches[0].spans[0].classList.add('current');
-      // Immer zum Span scrollen (Seite + genaue Position) – auch wenn Marker aktiv
-      scrollToSpan(searchMatches[0].spans[0], `Item → „${term}"`);
+      const firstOverlay = searchMatches[0].groups[0].overlay;
+      firstOverlay.classList.add('current');
+      scrollToOverlay(firstOverlay, `Item → „${term}"`);
     } else {
       setStatus(`„${term}" nicht gefunden`, "item");
     }
+  }
+
+  // Berechnet die umschließende Box aller Spans relativ zum page-wrap
+  function getGroupBoundingBox(spans, pageWrap) {
+    const wrapRect = pageWrap.getBoundingClientRect();
+    let minLeft = Infinity, minTop = Infinity, maxRight = -Infinity, maxBottom = -Infinity;
+
+    for (const span of spans) {
+      const r = span.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue;
+      minLeft   = Math.min(minLeft,   r.left   - wrapRect.left);
+      minTop    = Math.min(minTop,    r.top    - wrapRect.top);
+      maxRight  = Math.max(maxRight,  r.right  - wrapRect.left);
+      maxBottom = Math.max(maxBottom, r.bottom - wrapRect.top);
+    }
+    if (minLeft === Infinity) return null;
+    return { left: minLeft - 1, top: minTop - 1, width: maxRight - minLeft + 2, height: maxBottom - minTop + 2 };
+  }
+
+  // Gibt nur die Spans zurück die den Suchbegriff in der Zeile abdecken.
+  // Funktioniert auch wenn der Begriff über mehrere Spans verteilt ist
+  // (z.B. "OTon" + "-" + "10" als drei separate PDF-Elemente).
+  function findMatchingSpans(line, termLower) {
+    // Kumulativen Zeilentext mit Positions-Map aufbauen
+    let cumText = "";
+    const segMap = []; // { start, end, span }
+
+    for (const seg of line) {
+      const start = cumText.length;
+      cumText += seg.text.toLowerCase();
+      segMap.push({ start, end: cumText.length, span: seg.span });
+    }
+
+    const result = [];
+    let pos = 0;
+    while (pos < cumText.length) {
+      const idx = cumText.indexOf(termLower, pos);
+      if (idx === -1) break;
+      const termEnd = idx + termLower.length;
+
+      // Alle Spans die [idx, termEnd) überlappen
+      for (const seg of segMap) {
+        if (seg.span && seg.end > idx && seg.start < termEnd) {
+          if (!result.includes(seg.span)) result.push(seg.span);
+        }
+      }
+      pos = idx + 1;
+    }
+    return result;
   }
 
   // Gruppiert textContent-Items nach Y-Koordinate zu Zeilen
@@ -640,10 +711,21 @@
     return lines.map(l => l.segs);
   }
 
+  async function setZoom(val) {
+    zoomFactor = parseFloat(val);
+    document.getElementById('zoom-label').textContent = Math.round(zoomFactor * 100) + '%';
+    if (!pdfDoc) return;
+    const savedPage = currentPage;
+    await renderAllPages();
+    if (lastSearchTerm) {
+      await searchInPDF(lastSearchTerm);
+    } else {
+      scrollToPage(savedPage, null);
+    }
+  }
+
   function clearAllHighlights() {
-    document.querySelectorAll('.textLayer .highlight').forEach(el => {
-      el.classList.remove('highlight', 'current');
-    });
+    document.querySelectorAll('.highlight-overlay').forEach(el => el.remove());
     document.getElementById('match-count').textContent = '';
     searchMatches = [];
   }
@@ -666,13 +748,29 @@
     if (reason) setStatus(reason, "marker");
   }
 
-  // Scrollt direkt zum Span (Treffer an Oberkante des Viewers)
+  // Scrollt zum Overlay nur wenn er nicht bereits im sichtbaren Bereich liegt
+  function scrollToOverlay(overlay, reason) {
+    if (!overlay) return;
+    const viewerWrap = document.getElementById('viewer-wrap');
+    const rect       = overlay.getBoundingClientRect();
+    const wrapRect   = viewerWrap.getBoundingClientRect();
+
+    const isVisible = rect.top >= wrapRect.top && rect.bottom <= wrapRect.bottom;
+
+    if (!isVisible) {
+      const scrollTarget = viewerWrap.scrollTop + (rect.top - wrapRect.top) - 20;
+      viewerWrap.scrollTo({ top: scrollTarget, behavior: 'instant' });
+      showScrollIndicator(reason || "Item gefunden");
+    }
+    setStatus(reason || "Item gefunden", "item");
+  }
+
+  // scrollToSpan bleibt als Fallback
   function scrollToSpan(span, reason) {
     if (!span) return;
     const viewerWrap = document.getElementById('viewer-wrap');
     const spanRect   = span.getBoundingClientRect();
     const wrapRect   = viewerWrap.getBoundingClientRect();
-    // Aktueller Scroll-Offset + Abstand des Spans zur Oberkante des Viewers
     const scrollTarget = viewerWrap.scrollTop + (spanRect.top - wrapRect.top) - 20;
     viewerWrap.scrollTo({ top: scrollTarget, behavior: 'instant' });
     showScrollIndicator(reason || "Item gefunden");
@@ -745,11 +843,22 @@
   }
 
   function updateParamDisplay() {
-    document.getElementById('pageOffsetVal').textContent = pageOffset;
-    document.getElementById('markerTagVal').textContent  = markerTag;
+    document.getElementById('pageOffsetVal').textContent  = pageOffset;
+    document.getElementById('markerTagVal').textContent   = markerTag;
+    document.getElementById('itemFilterVal').textContent  = itemFilter || "–";
   }
 
   function prompt_itemTag() {} // nicht mehr benötigt
+
+  function prompt_itemFilter() {
+    const v = prompt("Item-Filter eingeben (nur Items die diesen Begriff enthalten werden gesucht):\nLeer lassen = kein Filter", itemFilter);
+    if (v !== null) {
+      itemFilter = v.trim();
+      updateParamDisplay();
+      // Aktuelle Suche neu auslösen falls Item-Modus läuft
+      lastSearchTerm = "";
+    }
+  }
 
   function setStatus(msg, type) {
     document.getElementById('status-msg').textContent = msg;
@@ -897,8 +1006,25 @@
     </div>
 
     <div class="param-field">
+      <label>Item-Filter:</label>
+      <span class="val" id="itemFilterVal" onclick="prompt_itemFilter()" style="color:var(--accent2)">–</span>
+    </div>
+
+    <div class="param-field">
       <label>Offset:</label>
       <span class="val" id="pageOffsetVal" onclick="prompt_pageOffset()">0</span>
+    </div>
+
+    <div class="separator"></div>
+
+    <!-- Zoom -->
+    <div class="param-field">
+      <label>Zoom:</label>
+      <input type="range" id="zoom-slider"
+        min="0.5" max="3.0" step="0.1" value="1.0"
+        oninput="setZoom(this.value)"
+        style="width:80px; accent-color:var(--accent); cursor:pointer; vertical-align:middle;">
+      <span id="zoom-label" style="font-family:'Share Tech Mono',monospace; color:var(--accent); font-size:11px; min-width:36px;">100%</span>
     </div>
 
     <div class="separator"></div>
