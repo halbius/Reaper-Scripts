@@ -22,7 +22,9 @@ The markername has to start with '§'
 Any marker starting with § ist listed in the scripts window.
 Per default auto link is on. When dragging an item over the next correctly named (§) marker, they are linked.
 If you turn auto link off, you can link the marker manualy to an item by clicking on 'link' in the markers row.
-Any couple can be unlinkend individually, or all together   
+Any couple can be unlinkend individually, or all together.
 
+
+<h1>   </h1>
 
 [Thanks for Pimping Reaper!](https://paypal.me/chralp/5)
