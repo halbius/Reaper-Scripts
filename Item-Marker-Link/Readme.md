@@ -1,7 +1,7 @@
 This Script links Markers to items.
 When moving the item, the marker follows. Moving the marker, the item follows.
 
-Requirement: The markername has to start with '§'
+<h1>Requirement</h1>: The markername has to start with '§'
 
 Installation:
 
