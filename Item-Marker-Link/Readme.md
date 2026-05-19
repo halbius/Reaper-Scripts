@@ -25,4 +25,4 @@ If you turn auto link off, you can link the marker manualy to an item by clickin
 Any couple can be unlinkend individually, or all together   
 
 
-[Thanks for Pimping Reaper!](https://paypal.me/chralp/5
+[Thanks for Pimping Reaper!](https://paypal.me/chralp/5)
